@@ -69,7 +69,18 @@ class AnnotationStore {
         self.db.saveAnnotation(annotation: annotation)
     }
 
-    func delete(annotation: Annotation) {
+    func delete(annotation: Annotation, isUndoRedo: Bool = false) {
+        if !isUndoRedo {
+            // Fetch old value
+            let oldValue = self.annotationById(annotationId: annotation.id)
+            // Store change on undo stack
+            let undoStep = UndoStep(oldValue: oldValue, newValue: nil)
+            self.undoStack.append(undoStep)
+
+            // Reset redo stack
+            self.redoStack = []
+        }
+
         self.state.remove(annotation)
         self.db.delete(annotation: annotation)
     }
@@ -79,13 +90,7 @@ class AnnotationStore {
             return
         }
 
-        if let annotation = undoStep.oldValue {
-            self.save(annotation: annotation, isUndoRedo: true)
-        } else if let annotation = undoStep.newValue {
-            self.delete(annotation: annotation)
-        } else {
-            fatalError("Undo step with either old nor new value makes no sense")
-        }
+        self.perform(undoStep: undoStep)
 
         self.redoStack.append(undoStep.flip())
     }
@@ -95,15 +100,19 @@ class AnnotationStore {
             return
         }
 
+        self.perform(undoStep: undoStep)
+
+        self.undoStack.append(undoStep.flip())
+    }
+
+    func perform(undoStep: UndoStep<Annotation>) {
         if let annotation = undoStep.oldValue {
             self.save(annotation: annotation, isUndoRedo: true)
         } else if let annotation = undoStep.newValue {
-            self.delete(annotation: annotation)
+            self.delete(annotation: annotation, isUndoRedo: true)
         } else {
             fatalError("Undo step with either old nor new value makes no sense")
         }
-
-        self.undoStack.append(undoStep.flip())
     }
 
 }
@@ -147,6 +156,7 @@ let updatedAnnotation = annotation.changeColor(color: .blue)
 store.save(annotation: updatedAnnotation)
 let updatedAnnotation2 = annotation.changeColor(color: .yellow)
 store.save(annotation: updatedAnnotation2)
+store.delete(annotation: annotation)
 
 
 func performAndPrint(closure: () -> Void) {
@@ -168,6 +178,14 @@ performAndPrint {
 
 performAndPrint {
     store.undo()
+}
+
+performAndPrint {
+    store.undo()
+}
+
+performAndPrint {
+    store.redo()
 }
 
 performAndPrint {
