@@ -5,6 +5,7 @@ import Cocoa
 enum Color {
     case red
     case blue
+    case yellow
 }
 
 class DB {
@@ -17,6 +18,12 @@ class DB {
         self.state.remove(annotation)
         self.state.insert(annotation)
     }
+
+}
+
+struct UndoStep<T> {
+    let oldValue: T?
+    let newValue: T?
 }
 
 class AnnotationStore {
@@ -29,19 +36,53 @@ class AnnotationStore {
 
     var state: Set<Annotation> = []
 
-    func save(annotation: Annotation) {
+    var undoStack: [UndoStep<Annotation>] = []
+    var redoStack: [UndoStep<Annotation>] = []
+
+    func annotationById(annotationId: UUID) -> Annotation? {
+        return self.state.filter { $0.id == annotationId }.first
+    }
+
+    func save(annotation: Annotation, isUndoRedo: Bool = false) {
+        if !isUndoRedo {
+            // Fetch old value
+            let oldValue = self.annotationById(annotationId: annotation.id)
+            // Store change on undo stack
+            let undoStep = UndoStep(oldValue: oldValue, newValue: annotation)
+            self.undoStack.append(undoStep)
+
+            // Reset redo stack
+            self.redoStack = []
+        }
+
         // Replace old with new
         self.state.remove(annotation)
         self.state.insert(annotation)
         self.db.saveAnnotation(annotation: annotation)
     }
 
-    func undo() {
+    func delete(annotation: Annotation) {
 
     }
 
-    func redo() {
+    func undo() {
+        guard let undoStep = self.undoStack.popLast() else {
+            return
+        }
 
+        if let annotation = undoStep.oldValue {
+            self.save(annotation: annotation, isUndoRedo: true)
+        } else if let annotation = undoStep.newValue {
+            self.delete(annotation: annotation)
+        } else {
+            fatalError("Undo step with either old nor new value makes no sense")
+        }
+
+        self.redoStack.append(undoStep)
+    }
+
+    func redo() {
+        
     }
 
 }
@@ -83,6 +124,22 @@ let annotation = Annotation(color: .red)
 store.save(annotation: annotation)
 let updatedAnnotation = annotation.changeColor(color: .blue)
 store.save(annotation: updatedAnnotation)
+let updatedAnnotation2 = annotation.changeColor(color: .yellow)
+store.save(annotation: updatedAnnotation2)
+
 
 print(store.state)
 print(db.state)
+
+store.undo()
+
+print(store.state)
+print(db.state)
+
+store.undo()
+
+print(store.state)
+print(db.state)
+
+
+
