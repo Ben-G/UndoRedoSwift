@@ -19,11 +19,19 @@ class DB {
         self.state.insert(annotation)
     }
 
+    func delete(annotation: Annotation) {
+        self.state.remove(annotation)
+    }
+
 }
 
 struct UndoStep<T> {
     let oldValue: T?
     let newValue: T?
+
+    func flip() -> UndoStep<T> {
+        return UndoStep(oldValue: self.newValue, newValue: self.oldValue)
+    }
 }
 
 class AnnotationStore {
@@ -62,7 +70,8 @@ class AnnotationStore {
     }
 
     func delete(annotation: Annotation) {
-
+        self.state.remove(annotation)
+        self.db.delete(annotation: annotation)
     }
 
     func undo() {
@@ -78,11 +87,23 @@ class AnnotationStore {
             fatalError("Undo step with either old nor new value makes no sense")
         }
 
-        self.redoStack.append(undoStep)
+        self.redoStack.append(undoStep.flip())
     }
 
     func redo() {
-        
+        guard let undoStep = self.redoStack.popLast() else {
+            return
+        }
+
+        if let annotation = undoStep.oldValue {
+            self.save(annotation: annotation, isUndoRedo: true)
+        } else if let annotation = undoStep.newValue {
+            self.delete(annotation: annotation)
+        } else {
+            fatalError("Undo step with either old nor new value makes no sense")
+        }
+
+        self.undoStack.append(undoStep.flip())
     }
 
 }
@@ -128,18 +149,40 @@ let updatedAnnotation2 = annotation.changeColor(color: .yellow)
 store.save(annotation: updatedAnnotation2)
 
 
-print(store.state)
-print(db.state)
-
-store.undo()
-
-print(store.state)
-print(db.state)
-
-store.undo()
+func performAndPrint(closure: () -> Void) {
+    closure()
+    print(store.state)
+    print(db.state)
+}
 
 print(store.state)
 print(db.state)
 
+performAndPrint {
+    store.undo()
+}
 
+performAndPrint {
+    store.undo()
+}
+
+performAndPrint {
+    store.undo()
+}
+
+performAndPrint {
+    store.redo()
+}
+
+performAndPrint {
+    store.redo()
+}
+
+performAndPrint {
+    store.redo()
+}
+
+performAndPrint {
+    store.undo()
+}
 
