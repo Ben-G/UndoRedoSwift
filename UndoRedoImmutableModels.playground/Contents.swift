@@ -76,7 +76,7 @@ class AnnotationStore {
     }
 
     func annotationById(annotationId: UUID) -> Annotation? {
-        return self.state.filter { $0.id == annotationId }.first
+        return self.state.first { $0.id == annotationId }
     }
 
     func save(annotation: Annotation, isUndoRedo: Bool = false) {
