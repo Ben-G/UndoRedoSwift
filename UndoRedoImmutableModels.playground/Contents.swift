@@ -2,11 +2,45 @@
 
 import Cocoa
 
+// MARK: Core Types
+
 enum Color {
     case red
     case blue
     case yellow
 }
+
+struct Annotation: Hashable, Equatable {
+    let id: UUID
+    var color: Color
+
+    init(id: UUID = UUID(), color: Color) {
+        self.id = id
+        self.color = color
+    }
+
+    var hashValue: Int {
+        return self.id.hashValue
+    }
+
+    static func ==(lhs: Annotation, rhs: Annotation) -> Bool {
+        return lhs.id == rhs.id
+    }
+}
+
+// MARK: Undo/Redo Types
+
+struct UndoRedoStep<T> {
+    let oldValue: T?
+    let newValue: T?
+
+    /// Converts and undo step into a redo step and vice-versa.
+    func flip() -> UndoRedoStep<T> {
+        return UndoRedoStep(oldValue: self.newValue, newValue: self.oldValue)
+    }
+}
+
+// MARK: Scaffolding
 
 class DB {
     var state: Set<Annotation> = []
@@ -23,49 +57,47 @@ class DB {
         self.state.remove(annotation)
     }
 
-}
-
-struct UndoStep<T> {
-    let oldValue: T?
-    let newValue: T?
-
-    func flip() -> UndoStep<T> {
-        return UndoStep(oldValue: self.newValue, newValue: self.oldValue)
+    func create(annotation: Annotation) {
+        self.state.insert(annotation)
     }
+
 }
 
 class AnnotationStore {
 
     var db: DB
+    var state: Set<Annotation> = []
+
+    var undoStack: [UndoRedoStep<Annotation>] = []
+    var redoStack: [UndoRedoStep<Annotation>] = []
 
     init(db: DB) {
         self.db = db
     }
-
-    var state: Set<Annotation> = []
-
-    var undoStack: [UndoStep<Annotation>] = []
-    var redoStack: [UndoStep<Annotation>] = []
 
     func annotationById(annotationId: UUID) -> Annotation? {
         return self.state.filter { $0.id == annotationId }.first
     }
 
     func save(annotation: Annotation, isUndoRedo: Bool = false) {
+        // Don't record undo step for actions that are performed 
+        // as part of undo/redo.
         if !isUndoRedo {
             // Fetch old value
             let oldValue = self.annotationById(annotationId: annotation.id)
             // Store change on undo stack
-            let undoStep = UndoStep(oldValue: oldValue, newValue: annotation)
+            let undoStep = UndoRedoStep(oldValue: oldValue, newValue: annotation)
             self.undoStack.append(undoStep)
 
-            // Reset redo stack
+            // Reset redo stack after each user action that is not an undo/redo.
             self.redoStack = []
         }
 
-        // Replace old with new
+        // Update in-memory state.
         self.state.remove(annotation)
         self.state.insert(annotation)
+
+        // Update db state.
         self.db.saveAnnotation(annotation: annotation)
     }
 
@@ -74,10 +106,10 @@ class AnnotationStore {
             // Fetch old value
             let oldValue = self.annotationById(annotationId: annotation.id)
             // Store change on undo stack
-            let undoStep = UndoStep(oldValue: oldValue, newValue: nil)
+            let undoStep = UndoRedoStep(oldValue: oldValue, newValue: nil)
             self.undoStack.append(undoStep)
 
-            // Reset redo stack
+            // Reset redo stack after each user action that is not an undo/redo.
             self.redoStack = []
         }
 
@@ -86,84 +118,60 @@ class AnnotationStore {
     }
 
     func undo() {
-        guard let undoStep = self.undoStack.popLast() else {
+        guard let undoRedoStep = self.undoStack.popLast() else {
             return
         }
 
-        self.perform(undoStep: undoStep)
+        self.perform(undoRedoStep: undoRedoStep)
 
-        self.redoStack.append(undoStep.flip())
+        self.redoStack.append(undoRedoStep.flip())
     }
 
     func redo() {
-        guard let undoStep = self.redoStack.popLast() else {
+        guard let undoRedoStep = self.redoStack.popLast() else {
             return
         }
 
-        self.perform(undoStep: undoStep)
+        self.perform(undoRedoStep: undoRedoStep)
 
-        self.undoStack.append(undoStep.flip())
+        self.undoStack.append(undoRedoStep.flip())
     }
 
-    func perform(undoStep: UndoStep<Annotation>) {
-        if let annotation = undoStep.oldValue {
-            self.save(annotation: annotation, isUndoRedo: true)
-        } else if let annotation = undoStep.newValue {
-            self.delete(annotation: annotation, isUndoRedo: true)
-        } else {
-            fatalError("Undo step with either old nor new value makes no sense")
+    func perform(undoRedoStep: UndoRedoStep<Annotation>) {
+        // Switch over the old and new value and call a store method that
+        // implements the transition between these values.
+        switch (undoRedoStep.oldValue, undoRedoStep.newValue) {
+        // Old and new value are non-nil: update.
+        case let (oldValue?, newValue?):
+            self.save(annotation: oldValue, isUndoRedo: true)
+        // New value is nil, old value was non-nil: create.
+        case (let oldValue?, nil):
+            // Our `save` implementation also handles creates, but depending
+            // on your DB interface these might be separate methods.
+            self.save(annotation: oldValue, isUndoRedo: true)
+        // Old value was nil, new value was non-nil: delete.
+        case (nil, let newValue?):
+            self.delete(annotation: newValue, isUndoRedo: true)
+        default:
+            fatalError("Undo step with neither old nor new value makes no sense")
         }
     }
 
 }
 
-struct Annotation: Hashable, Equatable {
-    let id: UUID
-    let color: Color
+// MARK: Test code
 
-    private init(id: UUID, color: Color) {
-        self.id = id
-        self.color = color
-    }
-
-    init(color: Color) {
-        self.id = UUID()
-        self.color = color
-    }
-
-    func changeColor(color: Color) -> Annotation {
-        return Annotation(
-            id: self.id,
-            color: color
-        )
-    }
-
-    var hashValue: Int {
-        return self.id.hashValue
-    }
-
-    static func ==(lhs: Annotation, rhs: Annotation) -> Bool {
-        return lhs.id == rhs.id
-    }
-}
 
 let db = DB()
 let store = AnnotationStore(db: db)
 
-let annotation = Annotation(color: .red)
+var annotation = Annotation(color: .red)
 store.save(annotation: annotation)
-let updatedAnnotation = annotation.changeColor(color: .blue)
-store.save(annotation: updatedAnnotation)
-let updatedAnnotation2 = annotation.changeColor(color: .yellow)
-store.save(annotation: updatedAnnotation2)
+annotation.color = .blue
+store.save(annotation: annotation)
+annotation.color = .yellow
+store.save(annotation: annotation)
 store.delete(annotation: annotation)
-
-
-func performAndPrint(closure: () -> Void) {
-    closure()
-    print(store.state)
-    print(db.state)
-}
 
 print(store.state)
 print(db.state)
@@ -204,3 +212,12 @@ performAndPrint {
     store.undo()
 }
 
+// MARK: Utils
+
+func performAndPrint(closure: () -> Void) {
+    closure()
+    print("Store")
+    print(store.state)
+    print("DB")
+    print(db.state)
+}
