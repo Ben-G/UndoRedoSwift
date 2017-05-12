@@ -142,7 +142,7 @@ class AnnotationStore {
         // implements the transition between these values.
         switch (undoRedoStep.oldValue, undoRedoStep.newValue) {
         // Old and new value are non-nil: update.
-        case let (oldValue?, newValue?):
+        case let (oldValue?, _?):
             self.save(annotation: oldValue, isUndoRedo: true)
         // New value is nil, old value was non-nil: create.
         case (let oldValue?, nil):
